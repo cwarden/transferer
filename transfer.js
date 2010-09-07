@@ -1,5 +1,4 @@
 require.paths.push('/usr/lib/node')
-// require.paths.push('./../node_debug/node_debug/debug.js')
 var http = require("http");
 var url = require("url");
 var multipart = require("multipart");
@@ -28,10 +27,6 @@ var server = http.createServer(function(req, res) {
 	}
 });
 
-var debug = require("./node_debug/debug.js");
-debug.listen(8080);
-
-// Server would listen on port 8000
 server.listen(8000);
 
 /*
@@ -46,44 +41,14 @@ function display_form(req, res) {
 			  '<form action="/upload?uuid=' + uuid + '" method="post" enctype="multipart/form-data">'+
 			  '<input type="file" name="upload-file">'+
 			  '<input type="submit" value="Upload">'+
-			  '</form>'
+			  '</form>' +
+			  '<br>' +
+			  'After you start uploading, <a href="/get?uuid=' + uuid + '">start download</a> to continue upload.'
 		 );
-		 res.close();
+		 res.end();
 	});
 }
 
-function get_file(req, res) {
-	var params = url.parse(req.url, true).query;
-	var uuid = params.uuid;
-	sys.debug('request for uuid = ' + uuid);
-	if (typeof uploads[uuid] == 'undefined') {
-		res.writeHead(404, 'Not Found');
-		res.write('File not found.');
-		res.end();
-		return;
-	}
-
-	res.writeHead(200, 'OK', {
-		'Content-type':  uploads[uuid].contentType,
-		'Content-Disposition': 'attachment; filename="' + uploads[uuid].filename + '"',
-		'Content-Transfer-Encoding': 'binary'
-	});
-	// write first chunk
-	uploads[uuid].downloader = res;
-	res.addListener('drain', function() {
-		sys.debug('Downloader drained.  Resuming uploader.');
-		uploads[uuid].uploader.resume();
-	});
-	sys.debug('Writing first chunk to client');
-	if (uploads[uuid].chunk != null && res.write(uploads[uuid].chunk, 'binary')) {
-		sys.debug('First chunk written with no waiting.  Resuming uploader.');
-		uploads[uuid].uploader.resume();
-	}
-	if (uploads[uuid].uploadComplete) {
-		sys.debug('Upload is already complete.  Completing download.')
-		res.end();
-	}
-}
 
 /*
  * Create multipart parser to parse given request
@@ -107,49 +72,152 @@ function parse_multipart(req) {
 	return parser;
 }
 
-function Transfer() {
-	this.uploader = this.downloader = null;
+// get Transporter object used by both uploader and downlaoder
+var getTransporter = (function() {
+	// hash of transporters in use
+	var transporters = {};
+
+	function Transporter(uuid) {
+		if (!(this instanceof arguments.callee)) {
+			throw new Error('Constructor called as function');
+		}
+		this.uuid = uuid;
+		this.uploader = this.downloader = null;
+	}
+
+	// send a chunk to the downloader.  if there is no downloader yet, wait for him.
+	Transporter.prototype.upload = function(chunk) {
+		this.uploader.req.pause();
+		if (this.downloader) {
+			sys.debug('Found a downloader.  Writing chunk.');
+			if (this.downloader.res.write(chunk, 'binary')) {
+				// write to client flushed to kernel buffer
+				sys.debug('No wait sending chunk to downloader.  Resuming uploader.');
+				this.uploader.req.resume();
+			}
+		} else {
+			sys.debug('No downloader.  Storing chunk.');
+			this.chunk = chunk;
+		}
+	}
+
+	// start download
+	Transporter.prototype.download = function(req, res) {
+		this.downloader = {
+			'req': req,
+			'res': res
+		};
+
+		this.downloader.res.writeHead(200, 'OK', {
+			'Content-type':  this.contentType,
+			'Content-Disposition': 'attachment; filename="' + this.filename + '"',
+			// 'Content-Transfer-Encoding': 'binary'
+		});
+
+		// assumes uploader starts first
+		var uploader = this.uploader;
+		this.downloader.res.addListener('drain', function() {
+			sys.debug('Downloader drained.  Resuming uploader.');
+			uploader.req.resume();
+		});
+
+		sys.debug('Writing first chunk to client');
+		if (this.chunk != null && this.downloader.res.write(this.chunk, 'binary')) {
+			sys.debug('First chunk written with no waiting.  Resuming uploader.');
+			this.uploader.req.resume();
+		}
+		if (this.uploadComplete) {
+			sys.debug('Upload is already complete.  Completing download.')
+			this.downloader.res.end();
+		}
+	}
+
+	Transporter.prototype.shutdown = function() {
+		if (this.downloader) {
+			// downloader is done
+			sys.debug('Download complete');
+			this.downloader.res.end();
+			// Handle request completion, as all chunks were already written
+			upload_complete(this.uploader.res);
+		} else {
+			sys.debug('Upload complete');
+			this.uploadComplete = true;
+			upload_complete(this.uploader.res, true);
+		}
+		sys.debug('Destroying Transporter for uuid: ' + this.uuid);
+		delete transporters[this.uuid];
+	}
+
+	return function(uuid) {
+		if (typeof transporters[uuid] == 'undefined') {
+			transporters[uuid] = new Transporter(uuid);
+		}
+		sys.debug('TRANSPORTERS: ');
+		for (var i in transporters) {
+			if (transporters.hasOwnProperty(i)) {
+				sys.debug(i);
+			}
+		}
+		return transporters[uuid];
+	};
+})();
+
+// download file
+function get_file(req, res) {
+	var params = url.parse(req.url, true).query;
+	var uuid = params.uuid.replace(/[^\w-]/g, '');
+	sys.debug('request for uuid = ' + uuid);
+	var transporter = getTransporter(uuid);
+	
+	// downloader-initiated transfers not implemented yet
+	if (!transporter.uploader) {
+		res.writeHead(404, 'Not Found');
+		res.write('File not found.  Was the uploaded started first?');
+		res.end();
+		return;
+	}
+
+	transporter.download(req, res);
 }
 
-Transfer.prototype.transfer = function() {
-	
-}
 
 /*
  * Handle file upload
  */
 function upload_file(req, res) {
-	// Request body is binary
 	try {
 		var params = url.parse(req.url, true).query;
-		var uuid = params.uuid;
+		var uuid = params.uuid.replace(/[^\w-]/g, '');
 	} catch (e) {
 		sys.debug(e);
 		show_error(e, req, res);
 	}
 	sys.debug('uuid = ' + uuid);
 	req.setEncoding("binary");
-	uploads[uuid] = {};
-	uploads[uuid].uploadComplete = false;
 
+	/*
 	for (var i in req) {
 		if (req.hasOwnProperty(i)) {
 			sys.debug('req.' + i + '= ' + req[i]);
 		}
 	}
+	*/
+
+	var transporter = getTransporter(uuid);
+	sys.debug('TRANSPORTER: ' + transporter);
+	transporter.uploader = {
+		'req': req,
+		'res': res
+	};
 
 	// Handle request as multipart
 	var stream = parse_multipart(req);
-
-	var fileName = null;
-	var fileStream = null;
 
 	// Set handler for a request part received
 	stream.onPartBegin = function(part) {
 		sys.debug("Started part, name = " + part.name + ", filename = " + part.filename);
 
-		uploads[uuid].filename = part.filename;
-		uploads[uuid].uploader = req;
+		/*
 		for (var i in part) {
 			if (part.hasOwnProperty(i)) {
 				sys.debug('part.' + i + ' = ' + part[i]);
@@ -160,67 +228,37 @@ function upload_file(req, res) {
 				sys.debug('part.headers.' + i + ' = ' + part.headers[i]);
 			}
 		}
-		uploads[uuid].contentType = part.headers['content-type'];
-		req.pause();
+		*/
+
+		transporter.filename = part.filename;
+		transporter.contentType = part.headers['content-type'];
 	};
 
 	// Set handler for a request part body chunk received
 	stream.onData = function(chunk) {
 		sys.debug('Got multipart chunk');
-		// Pause receiving request data (until current chunk is written)
-		req.pause();
-		/*
-		setTimeout(function() {
-			req.resume();
-		}, 3000);
-		*/
-
-		// Write chunk to file
-		// Note that it is important to write in binary mode
-		// Otherwise UTF-8 characters are interpreted
-		// sys.debug("Writing chunk");
-		// fileStream.write(chunk, "binary");
-
-		if (uploads[uuid].downloader) {
-			sys.debug('Found a downloader.  Writing chunk.');
-			if (uploads[uuid].downloader.write(chunk, 'binary')) {
-				// write to client flushed to kernel buffer
-				sys.debug('No wait sending chunk to downloader.  Resuming uploader.');
-				req.resume();
-			}
-		} else {
-			sys.debug('No downloader.  Storing chunk.');
-			uploads[uuid].chunk = chunk;
-		}
+		transporter.upload(chunk);
 	};
 
 	// Set handler for request completed
 	stream.onEnd = function() {
 		sys.debug('stream ended');
-		// As this is after request completed, all writes should have been queued by now
-		// So following callback will be executed after all the data is written out
-		if (uploads[uuid].downloader) {
-			// downloader is done
-			sys.debug('Download complete');
-			uploads[uuid].downloader.end();
-			// Handle request completion, as all chunks were already written
-			upload_complete(res);
-		} else {
-			uploads[uuid].uploadComplete = true;
-			upload_complete(res);
-		}
-		delete uploads[uuid];
+		transporter.shutdown();
 	};
 }
 
-function upload_complete(res) {
+function upload_complete(res, noDownload) {
 	sys.debug("Upload request complete");
 
 	// Render response
 	res.writeHead(200, {
 		'Content-Type': 'text/plain',
 	});
-	res.write("Thanks for playing!");
+	if (noDownload) {
+		res.write("That was a little one.  Why not just email it?");
+	} else {
+		res.write("File transfer complete!");
+	}
 	res.end();
 
 	sys.puts("\n=> Done");
@@ -236,7 +274,7 @@ function show_404(req, res) {
 }
 
 function show_error(err, req, res) {
-	res.writeHead(404, {"Content-Type": "text/plain"});
+	res.writeHead(500, {"Content-Type": "text/plain"});
 	res.write(err);
 	res.end();
 }
