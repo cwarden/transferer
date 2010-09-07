@@ -128,7 +128,7 @@ function upload_file(req, res) {
 		show_error(e, req, res);
 	}
 	sys.debug('uuid = ' + uuid);
-	req.setBodyEncoding("binary");
+	req.setEncoding("binary");
 	uploads[uuid] = {};
 	uploads[uuid].uploadComplete = false;
 
@@ -209,6 +209,7 @@ function upload_file(req, res) {
 			uploads[uuid].uploadComplete = true;
 			upload_complete(res);
 		}
+		delete uploads[uuid];
 	};
 }
 
