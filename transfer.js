@@ -275,6 +275,6 @@ function show_404(req, res) {
 
 function show_error(err, req, res) {
 	res.writeHead(500, {"Content-Type": "text/plain"});
-	res.write(err);
+	res.write(err.name + "\n" + err.message);
 	res.end();
 }
