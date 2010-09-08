@@ -1,0 +1,22 @@
+<div id="status"></div>
+<div id="complete"></div>
+<iframe style="width:0px;height:0px;border:0px solid #FFF;" id="formframe" name="formframe" src=""></iframe>
+<iframe style="width:0px;height:0px;border:0px solid #FFF;" id="statusframe" name="statusframe" src=""></iframe>
+<div id="wrapper">
+	<form id="theform" action="/upload?uuid=<%= uuid %>" method="post" enctype="multipart/form-data">
+		<input type="file" name="upload-file">
+		<input type="submit" value="Upload">
+	</form>
+	<br>
+	After you start uploading, <a href="/get?uuid=<%= uuid %>">start download</a> to continue upload.
+</div>
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js"></script>
+<script>
+$(document).ready(function(){
+	$('form#theform').submit(function() {
+		$('div#status').html('<h3>Uploading ' + $(this).find('input[type=file]').val() + '</h3>');
+		$(this).attr('target', 'formframe').attr('action', $(this).attr('action')).hide();
+	});
+	// $('iframe#statusframe').attr('src', '/watch?uuid=<%= uuid %>');
+});
+</script>

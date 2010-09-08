@@ -6,6 +6,7 @@ var multipart = require("multipart");
 var sys = require("sys");
 var fs = require("fs");
 var child_process = require("child_process");
+var parrot = require('./lib/parrot');
 
 var uploads = {};
 var uuids = [];
@@ -21,6 +22,9 @@ var server = http.createServer(function(req, res) {
 			break;
 		case '/get':
 			get_file(req, res);
+			break;
+		case '/watch':
+			watch(req, res);
 			break;
 		default:
 			show_404(req, res);
@@ -38,15 +42,21 @@ function display_form(req, res) {
 	 child_process.exec("uuidgen", function(err, stdout, stderr) {
 		var uuid = stdout.trim();
 		uuids.push(uuid);
-		 res.write(
-			  '<form action="/upload?uuid=' + uuid + '" method="post" enctype="multipart/form-data">'+
-			  '<input type="file" name="upload-file">'+
-			  '<input type="submit" value="Upload">'+
-			  '</form>' +
-			  '<br>' +
-			  'After you start uploading, <a href="/get?uuid=' + uuid + '">start download</a> to continue upload.'
-		 );
-		 res.end();
+
+		fs.readFile('./templates/form.tmpl',
+			function(err, data) {
+				if (err) {
+					throw err;
+				}
+				var output = parrot.render(data, {
+					sandbox: {
+						uuid: uuid
+					}
+				});
+				res.write(output);
+				res.end();
+			 }
+		);
 	});
 }
 
@@ -84,6 +94,7 @@ var getTransporter = (function() {
 		}
 		this.uuid = uuid;
 		this.uploader = this.downloader = null;
+		this.watchers = [];
 	}
 
 	// send a chunk to the downloader.  if there is no downloader yet, wait for him.
@@ -100,7 +111,16 @@ var getTransporter = (function() {
 			sys.debug('No downloader.  Storing chunk.');
 			this.chunk = chunk;
 		}
-	}
+		var msg = 'Got ' + chunk.length + ' bytes';
+		var update = parrot.render('<script type="text/javascript">$(parent.document).find("div#complete").prepend("<%= msg %><br />");</script>', {
+			sandbox: {
+				msg: msg
+			}
+			});
+		for (var i = 0; i < this.watchers.length; i++) {
+			this.watchers[i].res.write(update);
+		}
+	};
 
 	// start download
 	Transporter.prototype.download = function(req, res) {
@@ -131,7 +151,16 @@ var getTransporter = (function() {
 			sys.debug('Upload is already complete.  Completing download.')
 			this.downloader.res.end();
 		}
-	}
+	};
+
+	Transporter.prototype.watch = function(req, res) {
+		res.writeHead(200, {"Content-Type": "text/html"});
+		res.write('<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js"></script>');
+		this.watchers.push({
+			'req': req,
+			'res': res
+		});
+	};
 
 	Transporter.prototype.shutdown = function() {
 		if (this.downloader) {
@@ -145,9 +174,12 @@ var getTransporter = (function() {
 			this.uploadComplete = true;
 			upload_complete(this.uploader.res, true);
 		}
+		for (var i = 0; i < this.watchers.length; i++) {
+			this.watchers[i].res.end();
+		}
 		sys.debug('Destroying Transporter for uuid: ' + this.uuid);
 		delete transporters[this.uuid];
-	}
+	};
 
 	return function(uuid) {
 		if (typeof transporters[uuid] == 'undefined') {
@@ -179,6 +211,15 @@ function get_file(req, res) {
 	}
 
 	transporter.download(req, res);
+}
+
+function watch(req, res) {
+	var params = url.parse(req.url, true).query;
+	var uuid = params.uuid.replace(/[^\w-]/g, '');
+	sys.debug('watch request for uuid = ' + uuid);
+	var transporter = getTransporter(uuid);
+
+	transporter.watch(req, res);
 }
 
 
