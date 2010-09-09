@@ -1,5 +1,6 @@
 <div id="status"></div>
 <div id="complete"></div>
+<div id="errors"><ul></ul></div>
 <iframe style="width:0px;height:0px;border:0px solid #FFF;" id="formframe" name="formframe" src=""></iframe>
 <iframe style="width:0px;height:0px;border:0px solid #FFF;" id="statusframe" name="statusframe" src=""></iframe>
 <div id="wrapper">
@@ -17,6 +18,29 @@ $(document).ready(function(){
 		$('div#status').html('<h3>Uploading ' + $(this).find('input[type=file]').val() + '</h3>');
 		$(this).attr('target', 'formframe').attr('action', $(this).attr('action')).hide();
 	});
-	// $('iframe#statusframe').attr('src', '/watch?uuid=<%= uuid %>');
+	$('div#errors ul').ajaxError(function(e, xhr, settings, error) {
+		/*
+		console.log(e);
+		console.log(xhr);
+		console.log(settings);
+		console.log(error);
+		*/
+		$(this).append('<li>Error requesting page ' + settings.url + ': ' + error + '</li>');
+	});
+	var updateStatus = function() {
+		setTimeout(function() {
+			$.getJSON('/watch?uuid=<%= uuid %>', function(data) {
+				var msg = data.bytes + ' transfered.';
+				if (data.complete) {
+					msg += ' Download complete.';
+				} else if (!data.downloading) {
+					msg += ' No downloader yet.';
+				}
+				$('div#complete').html(msg);
+				updateStatus();
+			});
+		}, 100);
+	};
+	updateStatus();
 });
 </script>

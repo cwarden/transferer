@@ -95,11 +95,17 @@ var getTransporter = (function() {
 		this.uuid = uuid;
 		this.uploader = this.downloader = null;
 		this.watchers = [];
+		this.transfered = 0;
 	}
 
 	// send a chunk to the downloader.  if there is no downloader yet, wait for him.
 	Transporter.prototype.upload = function(chunk) {
 		this.uploader.req.pause();
+		this.transfered += chunk.length;
+
+		var status = {};
+		status.bytes = this.transfered;
+		status.downloading = false;
 		if (this.downloader) {
 			sys.debug('Found a downloader.  Writing chunk.');
 			if (this.downloader.res.write(chunk, 'binary')) {
@@ -107,18 +113,16 @@ var getTransporter = (function() {
 				sys.debug('No wait sending chunk to downloader.  Resuming uploader.');
 				this.uploader.req.resume();
 			}
+			status.downloading = true;
 		} else {
 			sys.debug('No downloader.  Storing chunk.');
 			this.chunk = chunk;
 		}
-		var msg = 'Got ' + chunk.length + ' bytes';
-		var update = parrot.render('<script type="text/javascript">$(parent.document).find("div#complete").prepend("<%= msg %><br />");</script>', {
-			sandbox: {
-				msg: msg
-			}
-			});
-		for (var i = 0; i < this.watchers.length; i++) {
-			this.watchers[i].res.write(update);
+
+		var msg = JSON.stringify(status);
+		var w;
+		while (w = this.watchers.shift()) {
+			w.res.end(msg);
 		}
 	};
 
@@ -154,8 +158,17 @@ var getTransporter = (function() {
 	};
 
 	Transporter.prototype.watch = function(req, res) {
-		res.writeHead(200, {"Content-Type": "text/html"});
-		res.write('<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js"></script>');
+		res.writeHead(200, {"Content-Type": "application/x-javascript"});
+		if (this.downloadComplete) {
+			var status = {
+				bytes: this.transfered,
+				complete: true
+			}
+			var msg = JSON.stringify(status);
+			res.end(msg);
+			return;
+		}
+
 		this.watchers.push({
 			'req': req,
 			'res': res
@@ -166,6 +179,7 @@ var getTransporter = (function() {
 		if (this.downloader) {
 			// downloader is done
 			sys.debug('Download complete');
+			this.downloadComplete = true;
 			this.downloader.res.end();
 			// Handle request completion, as all chunks were already written
 			upload_complete(this.uploader.res);
@@ -178,7 +192,10 @@ var getTransporter = (function() {
 			this.watchers[i].res.end();
 		}
 		sys.debug('Destroying Transporter for uuid: ' + this.uuid);
-		delete transporters[this.uuid];
+		sys.debug('Transfered ' + this.transfered + ' bytes');
+		// delete transporters[this.uuid];
+		this.uploader = this.downloader = null;
+		this.watchers = [];
 	};
 
 	return function(uuid) {
