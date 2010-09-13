@@ -38,17 +38,19 @@ $(document).ready(function(){
 		setTimeout(function() {
 			$.getJSON('/watch?uuid=<%= uuid %>', function(data) {
 				var msg = data.bytes + ' bytes transfered.';
-				if (data.complete) {
-					msg += ' Download complete.';
-					$('div#complete').html(msg);
+				if (data.error) {
+					$('div#status').html('<h3>Transfer failed</h3>');
+					msg += ' ' + data.error;
+				} else if (data.complete) {
 					$('div#download').html('<a href="/">Transfer another?</a>');
-					return;
-				} 
-				if (!data.downloading) {
+					$('div#status').html('<h3>Transfer complete</h3>');
+				} else if (!data.downloading) {
 					msg += ' No downloader yet.';
+					updateStatus();
+				} else {
+					updateStatus();
 				}
 				$('div#complete').html(msg);
-				updateStatus();
 			});
 		}, 100);
 	};

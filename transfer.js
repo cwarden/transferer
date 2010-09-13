@@ -13,6 +13,12 @@ var uuids = [];
 
 var server = http.createServer(function(req, res) {
 	// Simple path-based request dispatcher
+	req.addListener('end', function() {
+		sys.debug('request ended for ' + req.url);
+	});
+	res.addListener('end', function() {
+		sys.debug('response ended for ' + req.url);
+	});
 	switch (url.parse(req.url).pathname) {
 		case '/':
 			display_form(req, res);
@@ -33,6 +39,9 @@ var server = http.createServer(function(req, res) {
 });
 
 server.listen(8000);
+server.addListener('clientError', function(ex) {
+	sys.debug('clientError: ' + ex.name + ' => ' + ex.message);
+});
 
 /*
  * Display upload form
@@ -77,13 +86,14 @@ function parse_multipart(req) {
 	});
 
 	req.addListener("end", function() {
+		sys.debug('multipart request ended');
 		parser.close();
 	});
 
 	return parser;
 }
 
-// get Transporter object used by both uploader and downlaoder
+// get Transporter object used by both uploader and downloader
 var getTransporter = (function() {
 	// hash of transporters in use
 	var transporters = {};
@@ -93,13 +103,17 @@ var getTransporter = (function() {
 			throw new Error('Constructor called as function');
 		}
 		this.uuid = uuid;
+		this.error = null;
 		this.uploader = this.downloader = null;
 		this.watchers = [];
 		this.transfered = 0;
+		this.destructor = null;
+		this.downloadComplete = false;
 	}
 
 	// send a chunk to the downloader.  if there is no downloader yet, wait for him.
 	Transporter.prototype.upload = function(chunk) {
+		sys.debug('TRANSPORTER:\n' + sys.inspect(this));
 		this.uploader.req.pause();
 		this.transfered += chunk.length;
 
@@ -133,6 +147,20 @@ var getTransporter = (function() {
 			'res': res
 		};
 
+		var transporter = this;
+
+		// Record errors from downloader
+		this.downloader.req.connection.addListener('error', function(ex) {
+			sys.debug('Downloader error for ' + this.uuid + ': ' + ex.message);
+			transporter.error = 'Download failed: ' + ex.message;
+		});
+
+		// connection to downloader closed
+		this.downloader.req.connection.addListener('close', function(had_error) {
+			sys.debug('Downloader connection closed' + (had_error ? ' with an error' : ''));
+			transporter.shutdown();
+		});
+
 		this.downloader.res.writeHead(200, 'OK', {
 			'Content-type':  this.contentType,
 			'Content-Disposition': 'attachment; filename="' + this.filename + '"',
@@ -151,24 +179,30 @@ var getTransporter = (function() {
 			sys.debug('First chunk written with no waiting.  Resuming uploader.');
 			this.uploader.req.resume();
 		}
+		this.chunk = null;
 		if (this.uploadComplete) {
 			sys.debug('Upload is already complete.  Completing download.')
 			this.downloader.res.end();
 		}
+
 	};
 
 	Transporter.prototype.watch = function(req, res) {
+		sys.debug('TRANSPORTER:\n' + sys.inspect(this));
 		res.writeHead(200, {"Content-Type": "application/x-javascript"});
-		if (this.downloadComplete) {
+		// If download is comlete, send status right away
+		if (this.downloadComplete || this.error) {
 			var status = {
 				bytes: this.transfered,
-				complete: true
+				complete: this.downloadComplete,
+				error: this.error
 			}
 			var msg = JSON.stringify(status);
 			res.end(msg);
 			return;
 		}
 
+		// Attach watcher to get status at next update
 		this.watchers.push({
 			'req': req,
 			'res': res
@@ -176,24 +210,54 @@ var getTransporter = (function() {
 	};
 
 	Transporter.prototype.shutdown = function() {
-		if (this.downloader) {
+		if (this.destructor) {
+			sys.debug('shutdown called, but destruction already pending');
+			return;
+		}
+		sys.debug('Shutting down TRANSPORTER: ' + sys.inspect(this));
+		if (this.error) {
+			sys.debug('Killing uploader');
+			this.uploader.res.writeHead(500, {"Content-Type": "text/html"});
+			this.uploader.res.end('Transfer failed: ' + this.error);
+			this.uploader.req.connection.destroy();
+
+			sys.debug('Killing downloader');
+			this.downloader.res.connection.destroy();
+
+			var status = {
+				bytes: this.transfered,
+				error: this.error
+			};
+		} else if (this.downloader) {
 			// downloader is done
 			sys.debug('Download complete');
 			this.downloadComplete = true;
 			this.downloader.res.end();
 			// Handle request completion, as all chunks were already written
-			upload_complete(this.uploader.res);
+			this.uploader.res.writeHead(200, {"Content-Type": "text/html"});
+			this.uploader.res.end();
 		} else {
 			sys.debug('Upload complete');
 			this.uploadComplete = true;
-			upload_complete(this.uploader.res, true);
+			this.uploader.res.writeHead(200, {"Content-Type": "text/html"});
+			this.uploader.res.end('That was a little one.  Got the whole file in one chunk.');
 		}
 		for (var i = 0; i < this.watchers.length; i++) {
-			this.watchers[i].res.end();
+			if (this.error) {
+				this.watchers[i].res.end(JSON.stringify(status));
+			} else {
+				this.watchers[i].res.end();
+			}
 		}
-		sys.debug('Destroying Transporter for uuid: ' + this.uuid);
 		sys.debug('Transfered ' + this.transfered + ' bytes');
-		// delete transporters[this.uuid];
+
+		var uuid = this.uuid;
+		var timeout = 5;
+		sys.debug('Destroying Transporter for uuid ' + this.uuid + ' in ' + timeout + ' seconds');
+		this.destructor = setTimeout(function() {
+			sys.debug('Destroying Transporter for uuid: ' + uuid);
+			delete transporters[uuid];
+		}, timeout*1000);
 		this.uploader = this.downloader = null;
 		this.watchers = [];
 	};
@@ -218,7 +282,7 @@ function get_file(req, res) {
 	var uuid = params.uuid.replace(/[^\w-]/g, '');
 	sys.debug('request for uuid = ' + uuid);
 	var transporter = getTransporter(uuid);
-	
+
 	// downloader-initiated transfers not implemented yet
 	if (!transporter.uploader) {
 		res.writeHead(404, 'Not Found');
@@ -263,11 +327,20 @@ function upload_file(req, res) {
 	*/
 
 	var transporter = getTransporter(uuid);
-	sys.debug('TRANSPORTER: ' + transporter);
+	sys.debug('TRANSPORTER: ' + sys.inspect(transporter));
+	res.connection.setKeepAlive(true);
 	transporter.uploader = {
 		'req': req,
 		'res': res
 	};
+
+	/*
+	// connection to downloader closed
+	transporter.uploader.req.connection.addListener('end', function() {
+		sys.debug('Uploader connection ended');
+		transporter.shutdown();
+	});
+	*/
 
 	// Handle request as multipart
 	var stream = parse_multipart(req);
@@ -304,23 +377,6 @@ function upload_file(req, res) {
 		sys.debug('stream ended');
 		transporter.shutdown();
 	};
-}
-
-function upload_complete(res, noDownload) {
-	sys.debug("Upload request complete");
-
-	// Render response
-	res.writeHead(200, {
-		'Content-Type': 'text/plain',
-	});
-	if (noDownload) {
-		res.write("That was a little one.  Why not just email it?");
-	} else {
-		res.write("File transfer complete!");
-	}
-	res.end();
-
-	sys.puts("\n=> Done");
 }
 
 /*
