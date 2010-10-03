@@ -26,6 +26,9 @@ var server = http.createServer(function(req, res) {
 		case '/upload':
 			upload_file(req, res);
 			break;
+		case '/watch-get':
+			display_watched_get(req, res);
+			break;
 		case '/get':
 			get_file(req, res);
 			break;
@@ -67,6 +70,27 @@ function display_form(req, res) {
 			 }
 		);
 	});
+}
+
+function display_watched_get(req, res) {
+	var params = url.parse(req.url, true).query;
+	var uuid = params.uuid.replace(/[^\w-]/g, '');
+	sys.debug('request for watched get of uuid = ' + uuid);
+	res.writeHead(200, {"Content-Type": "text/html"});
+	fs.readFile('./templates/watch-get.tmpl',
+		function(err, data) {
+			if (err) {
+				throw err;
+			}
+			var output = parrot.render(data, {
+				sandbox: {
+					uuid: uuid
+				}
+			});
+			res.write(output);
+			res.end();
+		 }
+	);
 }
 
 
@@ -113,7 +137,7 @@ var getTransporter = (function() {
 
 	// send a chunk to the downloader.  if there is no downloader yet, wait for him.
 	Transporter.prototype.upload = function(chunk) {
-		sys.debug('TRANSPORTER:\n' + sys.inspect(this));
+		// sys.debug('TRANSPORTER:\n' + sys.inspect(this));
 		this.uploader.req.pause();
 		this.transfered += chunk.length;
 
@@ -188,7 +212,7 @@ var getTransporter = (function() {
 	};
 
 	Transporter.prototype.watch = function(req, res) {
-		sys.debug('TRANSPORTER:\n' + sys.inspect(this));
+		// sys.debug('TRANSPORTER:\n' + sys.inspect(this));
 		res.writeHead(200, {"Content-Type": "application/x-javascript"});
 		// If download is comlete, send status right away
 		if (this.downloadComplete || this.error) {
@@ -329,6 +353,19 @@ function upload_file(req, res) {
 	*/
 
 	var transporter = getTransporter(uuid);
+	
+	// Record errors from uploader
+	req.connection.addListener('error', function(ex) {
+		sys.debug('Uploader error for ' + uuid + ': ' + ex.message);
+		transporter.error = 'Upload failed: ' + ex.message;
+	});
+
+	// connection to uploader closed
+	req.connection.addListener('close', function(had_error) {
+		sys.debug('Uploader connection closed' + (had_error ? ' with an error' : ''));
+		transporter.shutdown();
+	});
+
 	sys.debug('TRANSPORTER: ' + sys.inspect(transporter));
 	res.connection.setKeepAlive(true);
 	transporter.uploader = {
