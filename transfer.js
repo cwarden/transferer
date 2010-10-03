@@ -222,7 +222,9 @@ var getTransporter = (function() {
 			this.uploader.req.connection.destroy();
 
 			sys.debug('Killing downloader');
-			this.downloader.res.connection.destroy();
+			if (this.downloader) {
+				this.downloader.res.connection.destroy();
+			}
 
 			var status = {
 				bytes: this.transfered,
@@ -347,6 +349,12 @@ function upload_file(req, res) {
 
 	// Set handler for a request part received
 	stream.onPartBegin = function(part) {
+		if (! part.filename) {
+			sys.debug('No filename for part ' + part.name);
+			transporter.error = 'No filename found';
+			transporter.shutdown();
+			return;
+		}
 		sys.debug("Started part, name = " + part.name + ", filename = " + part.filename);
 
 		/*
