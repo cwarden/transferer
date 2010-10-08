@@ -23,6 +23,9 @@ var server = http.createServer(function(req, res) {
 		case '/':
 			display_form(req, res);
 			break;
+		case '/prep-upload':
+			prep_upload_file(req, res);
+			break;
 		case '/upload':
 			upload_file(req, res);
 			break;
@@ -74,23 +77,39 @@ function display_form(req, res) {
 
 function display_watched_get(req, res) {
 	var params = url.parse(req.url, true).query;
-	var uuid = params.uuid.replace(/[^\w-]/g, '');
-	sys.debug('request for watched get of uuid = ' + uuid);
-	res.writeHead(200, {"Content-Type": "text/html"});
-	fs.readFile('./templates/watch-get.tmpl',
-		function(err, data) {
-			if (err) {
-				throw err;
-			}
-			var output = parrot.render(data, {
-				sandbox: {
-					uuid: uuid
+	var uuid;
+	if (params) {
+		uuid = params.uuid.replace(/[^\w-]/g, '');
+	}
+	var generateWatchedGetPage = function() {
+		sys.debug('request for watched get of uuid = ' + uuid);
+		res.writeHead(200, {"Content-Type": "text/html"});
+		fs.readFile('./templates/watch-get.tmpl',
+			function(err, data) {
+				if (err) {
+					throw err;
 				}
-			});
-			res.write(output);
-			res.end();
-		 }
-	);
+				var output = parrot.render(data, {
+					sandbox: {
+						uuid: uuid
+					}
+				});
+				res.write(output);
+				res.end();
+			 }
+		);
+	};
+	if (uuid) {
+		sys.debug('got a uuid. do not need to generate one');
+		generateWatchedGetPage();
+	} else {
+		child_process.exec("uuidgen", function(err, stdout, stderr) {
+			uuid = stdout.trim();
+			sys.debug('generated a new uuid: ' + uuid);
+			uuids.push(uuid);
+			generateWatchedGetPage();
+		});
+	}
 }
 
 
@@ -191,13 +210,19 @@ var getTransporter = (function() {
 			// 'Content-Transfer-Encoding': 'binary'
 		});
 
-		// assumes uploader starts first
-		var uploader = this.uploader;
 		this.downloader.res.addListener('drain', function() {
 			sys.debug('Downloader drained.  Resuming uploader.');
-			uploader.req.resume();
+			transporter.uploader.req.resume();
 		});
 
+		this.startUpload();
+		if (! this.uploader) {
+			// downloader is here first
+			return;
+		}
+
+		// upload has already started
+		var uploader = this.uploader;
 		sys.debug('Writing first chunk to client');
 		if (this.chunk != null && this.downloader.res.write(this.chunk, 'binary')) {
 			sys.debug('First chunk written with no waiting.  Resuming uploader.');
@@ -233,6 +258,18 @@ var getTransporter = (function() {
 		});
 	};
 
+	Transporter.prototype.startUpload = function() {
+		sys.debug('telling watchers that upload can start');
+		for (var i = 0; i < this.watchers.length; i++) {
+			this.watchers[i].res.end(JSON.stringify({
+				error: this.error,
+				bytes: this.transfered,
+				complete: this.downloadComplete,
+				downloading: true
+			}));
+		}
+	};
+
 	Transporter.prototype.shutdown = function() {
 		if (this.destructor) {
 			sys.debug('shutdown called, but destruction already pending');
@@ -260,8 +297,10 @@ var getTransporter = (function() {
 			this.downloadComplete = true;
 			this.downloader.res.end();
 			// Handle request completion, as all chunks were already written
-			this.uploader.res.writeHead(200, {"Content-Type": "text/html"});
-			this.uploader.res.end();
+			if (this.uploader) {
+				this.uploader.res.writeHead(200, {"Content-Type": "text/html"});
+				this.uploader.res.end();
+			}
 		} else {
 			sys.debug('Upload complete');
 			this.uploadComplete = true;
@@ -310,12 +349,14 @@ function get_file(req, res) {
 	var transporter = getTransporter(uuid);
 
 	// downloader-initiated transfers not implemented yet
+	/*
 	if (!transporter.uploader) {
 		res.writeHead(404, 'Not Found');
 		res.write('File not found.  Was the uploaded started first?');
 		res.end();
 		return;
 	}
+	*/
 
 	transporter.download(req, res);
 }
@@ -422,6 +463,12 @@ function upload_file(req, res) {
 		sys.debug('stream ended');
 		transporter.shutdown();
 	};
+}
+
+function prep_upload_file(req, res) {
+	res.writeHead(200, {"Content-Type": "text/plain"});
+	res.write("OK, stand by");
+	res.end();
 }
 
 /*

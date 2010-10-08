@@ -11,23 +11,30 @@
 <iframe style="width:0px;height:0px;border:0px solid #FFF;" id="statusframe" name="statusframe" src=""></iframe>
 <form id="theform" action="/upload?uuid=<%= uuid %>" method="post" enctype="multipart/form-data">
 	<input id="upload-file" type="file" name="upload-file">
-	<input type="submit" value="Upload">
+</form>
+<form id="prep-upload" action="/prep-upload?uuid=<%= uuid %>" method="post">
+	<input id="upload-button" type="submit" value="Upload">
 </form>
 <br>
 <div id="download">
 </div>
 <script>
 $(document).ready(function(){
-	$('form#theform').submit(function() {
+	$('form#prep-upload').submit(function() {
 		if (! $('input#upload-file').val()) {
 			alert('No file selected for upload');
 			return false;
 		}
-		$('div#status').html('<h3>Uploading ' + $(this).find('input[type=file]').val() + '</h3>');
-		$(this).attr('target', 'formframe').attr('action', $(this).attr('action')).hide();
+		$(this).attr('target', 'formframe').attr('action', $(this).attr('action')).add('form#theform').hide();
+		$('div#status').html('<h3>Waiting for downloader...</h3>');
 		$('div#download').html('<br/>Use this URL to download file: ' +
 			window.location.protocol + '//' + window.location.host + '/get?uuid=<%= uuid %>' +
 			'<br/>The upload will continue once downloading starts.');
+	});
+
+	$('form#theform').submit(function() {
+		$('div#status').html('<h3>Uploading ' + $(this).find('input[type=file]').val() + '</h3>');
+		$(this).attr('target', 'formframe').attr('action', $(this).attr('action')).hide();
 	});
 	$('div#errors ul').ajaxError(function(e, xhr, settings, error) {
 		/*
@@ -38,6 +45,7 @@ $(document).ready(function(){
 		*/
 		$(this).append('<li>Error requesting page ' + settings.url + ': ' + error + '</li>');
 	});
+	var uploading = false;
 	var updateStatus = function() {
 		setTimeout(function() {
 			$.getJSON('/watch?uuid=<%= uuid %>', function(data) {
@@ -50,6 +58,10 @@ $(document).ready(function(){
 					$('div#status').html('<h3>Transfer complete</h3>');
 				} else if (!data.downloading) {
 					msg += ' No downloader yet.';
+					updateStatus();
+				} else if (!uploading && data.downloading) {
+					$('form#theform').submit();
+					uploading = true;
 					updateStatus();
 				} else {
 					updateStatus();
