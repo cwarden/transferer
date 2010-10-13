@@ -53,11 +53,14 @@ server.addListener('clientError', function(ex) {
  * Display upload form
  */
 function display_form(req, res) {
-	res.writeHead(200, {"Content-Type": "text/html"});
-	 child_process.exec("uuidgen", function(err, stdout, stderr) {
-		var uuid = stdout.trim();
-		uuids.push(uuid);
-
+	var params = url.parse(req.url, true).query;
+	var uuid;
+	if (params && params.uuid) {
+		uuid = params.uuid.replace(/[^\w-]/g, '');
+	}
+	var generateUploadPage = function() {
+		sys.debug('request for upload form for uuid = ' + uuid);
+		res.writeHead(200, {"Content-Type": "text/html"});
 		fs.readFile('./templates/form.tmpl',
 			function(err, data) {
 				if (err) {
@@ -72,13 +75,23 @@ function display_form(req, res) {
 				res.end();
 			 }
 		);
-	});
+	};
+	if (uuid) {
+		generateUploadPage();
+	} else {
+		child_process.exec("uuidgen", function(err, stdout, stderr) {
+			uuid = stdout.trim();
+			sys.debug('generated a new uuid: ' + uuid);
+			uuids.push(uuid);
+			generateUploadPage();
+		});
+	}
 }
 
 function display_watched_get(req, res) {
 	var params = url.parse(req.url, true).query;
 	var uuid;
-	if (params) {
+	if (params && params.uuid) {
 		uuid = params.uuid.replace(/[^\w-]/g, '');
 	}
 	var generateWatchedGetPage = function() {
@@ -164,6 +177,10 @@ var getTransporter = (function() {
 		status.bytes = this.transfered;
 		status.downloading = false;
 		if (this.downloader) {
+			if (this.downloader.sendHeader) {
+				this.downloader.sendHeader();
+				delete this.downloader.sendHeader;
+			}
 			sys.debug('Found a downloader.  Writing chunk.');
 			if (this.downloader.res.write(chunk, 'binary')) {
 				// write to client flushed to kernel buffer
@@ -204,11 +221,14 @@ var getTransporter = (function() {
 			transporter.shutdown();
 		});
 
-		this.downloader.res.writeHead(200, 'OK', {
-			'Content-type':  this.contentType,
-			'Content-Disposition': 'attachment; filename="' + this.filename + '"',
-			// 'Content-Transfer-Encoding': 'binary'
-		});
+		this.downloader.sendHeader = function() {
+			sys.debug('Sending content-type and content-disposition headers to downloader');
+			transporter.downloader.res.writeHead(200, 'OK', {
+				'Content-type':  transporter.contentType,
+				'Content-Disposition': 'attachment; filename="' + transporter.filename + '"',
+				// 'Content-Transfer-Encoding': 'binary'
+			});
+		};
 
 		this.downloader.res.addListener('drain', function() {
 			sys.debug('Downloader drained.  Resuming uploader.');
@@ -220,6 +240,8 @@ var getTransporter = (function() {
 			// downloader is here first
 			return;
 		}
+
+		this.downloader.sendHeader();
 
 		// upload has already started
 		var uploader = this.uploader;
@@ -466,9 +488,22 @@ function upload_file(req, res) {
 }
 
 function prep_upload_file(req, res) {
-	res.writeHead(200, {"Content-Type": "text/plain"});
-	res.write("OK, stand by");
-	res.end();
+	try {
+		var params = url.parse(req.url, true).query;
+		var uuid = params.uuid.replace(/[^\w-]/g, '');
+		
+		var transporter = getTransporter(uuid);
+		// if we already have a downloader waiting, we can start the uploader
+		if (transporter.downloader) {
+			transporter.startUpload();
+		}
+		res.writeHead(200, {"Content-Type": "text/plain"});
+		res.write("OK, stand by");
+		res.end();
+	} catch (e) {
+		sys.debug(e);
+		show_error(e, req, res);
+	}
 }
 
 /*

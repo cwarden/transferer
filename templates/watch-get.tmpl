@@ -16,7 +16,14 @@
 <script>
 $(document).ready(function(){
 	$('a#startDownload').click(function() {
+		$(this).hide();
 		$('iframe#downloadframe').attr('src', '/get?uuid=<%= uuid %>');
+		if (! window.location.search) {
+			$('div#download').html('<br/>Send this URL to the uploader: <br/>' +
+				'<b>' + window.location.protocol + '//' + window.location.host + '/?uuid=<%= uuid %>' + '</b><br/>' +
+				'(or try this: <b>curl -F upload-file=@/path/to/a/file ' + window.location.protocol + '//' + window.location.host + '/upload?uuid=<%= uuid %>' + '</b>)<br/>' +
+				'<br/>The download will continue once uploading starts.');
+		}
 		return false;
 	});
 	$('div#errors ul').ajaxError(function(e, xhr, settings, error) {
