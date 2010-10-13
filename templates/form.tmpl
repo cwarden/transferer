@@ -8,28 +8,35 @@
 <div id="complete"></div>
 <div id="errors"><ul></ul></div>
 <iframe style="width:0px;height:0px;border:0px solid #FFF;" id="formframe" name="formframe" src=""></iframe>
-<iframe style="width:0px;height:0px;border:0px solid #FFF;" id="statusframe" name="statusframe" src=""></iframe>
-<form id="theform" action="/upload?uuid=<%= uuid %>" method="post" enctype="multipart/form-data">
-	<input id="upload-file" type="file" name="upload-file">
-</form>
-<form id="prep-upload" action="/prep-upload?uuid=<%= uuid %>" method="post">
-	<input id="upload-button" type="submit" value="Upload">
-</form>
+<table>
+	<tr>
+		<td>
+			<form id="theform" action="/upload?uuid=<%= uuid %>" method="post" enctype="multipart/form-data">
+				<input id="upload-file" type="file" name="upload-file">
+			</form>
+		</td>
+		<td>
+		</td>
+	</tr>
+</table>
 <br>
 <div id="download">
 </div>
 <script>
 $(document).ready(function(){
-	$('form#prep-upload').submit(function() {
+	$('input#upload-file').change(function() {
 		if (! $('input#upload-file').val()) {
 			alert('No file selected for upload');
 			return false;
 		}
-		$(this).attr('target', 'formframe').attr('action', $(this).attr('action')).add('form#theform').hide();
-		$('div#status').html('<h3>Waiting for downloader...</h3>');
-		$('div#download').html('<br/>Use this URL to download file: ' +
-			window.location.protocol + '//' + window.location.host + '/get?uuid=<%= uuid %>' +
-			'<br/>The upload will continue once downloading starts.');
+		$.get('/prep-upload?uuid=<%= uuid %>', function(data) {
+			$('form#theform').hide();
+			$('div#status').html('<h3>Waiting for downloader...</h3>');
+			$('div#download').html('<br/>Send one of these URLs to the downloader: <br/>' +
+				'Fancy Web Browsers: <b>' + window.location.protocol + '//' + window.location.host + '/watch-get?uuid=<%= uuid %>' + '</b><br/>' +
+				'wget, curl, or similar: <b>' + window.location.protocol + '//' + window.location.host + '/get?uuid=<%= uuid %>' + '</b><br/>' +
+				'<br/>The upload will continue once downloading starts.');
+		});
 	});
 
 	$('form#theform').submit(function() {
