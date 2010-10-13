@@ -1,0 +1,12 @@
+Transferer is a web-based file transfer application built on node.js.  It
+doesn't store any files on disk and sends each chunk of each uploaded file to
+the downloader as it is received so it doesn't (or shouldn't, at least) use
+much memory.
+
+I got the idea for this while reading Joe Armstrong's Erlang book
+(http://amzn.to/cpPqJV), although I still haven't gotten around to really
+learning Erlang.
+
+Initial upload code adapted from Felix Geisendörfer's work: http://debuggable.com/posts/streaming-file-uploads-with-node-js:4ac094b2-b6c8-4a7f-bd07-28accbdd56cb
+
+The code should be considered prototype quality at this point.
