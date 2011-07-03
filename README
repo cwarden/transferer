@@ -10,3 +10,8 @@ learning Erlang.
 Initial upload code adapted from Felix Geisendörfer's work: http://debuggable.com/posts/streaming-file-uploads-with-node-js:4ac094b2-b6c8-4a7f-bd07-28accbdd56cb
 
 The code should be considered prototype quality at this point.
+
+TODO
+* Figure out how to best handle dependencies
+* Unit tests
+* Give the code some structure
