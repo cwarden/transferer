@@ -7,6 +7,7 @@ var sys = require("sys");
 var fs = require("fs");
 var child_process = require("child_process");
 var parrot = require('./lib/parrot');
+var node_uuid = require('./lib/node-uuid');
 
 var uploads = {};
 var uuids = [];
@@ -79,12 +80,9 @@ function display_form(req, res) {
 	if (uuid) {
 		generateUploadPage();
 	} else {
-		child_process.exec("uuidgen", function(err, stdout, stderr) {
-			uuid = stdout.trim();
-			sys.debug('generated a new uuid: ' + uuid);
-			uuids.push(uuid);
-			generateUploadPage();
-		});
+		uuid = node_uuid();
+		uuids.push(uuid);
+		generateUploadPage();
 	}
 }
 
