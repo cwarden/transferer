@@ -6,8 +6,8 @@ var multipart = require("multipart");
 var sys = require("sys");
 var fs = require("fs");
 var child_process = require("child_process");
-var parrot = require('./lib/parrot');
-var node_uuid = require('./lib/node-uuid');
+var parrot = require('parrot');
+var node_uuid = require('node-uuid');
 
 var uploads = {};
 var uuids = [];
@@ -45,7 +45,8 @@ var server = http.createServer(function(req, res) {
 	}
 });
 
-server.listen(8000);
+var port = process.env.PORT || 8000;
+server.listen(port);
 server.addListener('clientError', function(ex) {
 	sys.debug('clientError: ' + ex.name + ' => ' + ex.message);
 });
