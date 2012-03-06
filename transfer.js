@@ -1,5 +1,3 @@
-// Debian puts libraries in /usr/lib/nodejs, but npm (not yet packaged) uses /usr/lib/node
-require.paths.push('/usr/lib/node')
 var http = require("http");
 var url = require("url");
 var multipart = require("multipart");
