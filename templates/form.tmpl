@@ -46,6 +46,7 @@ $(document).ready(function(){
 		$('div#status').html('<h3>Uploading ' + $(this).find('input[type=file]').val() + '</h3>');
 		$(this).attr('target', 'formframe').attr('action', $(this).attr('action')).hide();
 	});
+	var updateStatus;
 	$('div#errors ul').ajaxError(function(e, xhr, settings, error) {
 		/*
 		console.log(e);
@@ -53,10 +54,16 @@ $(document).ready(function(){
 		console.log(settings);
 		console.log(error);
 		*/
-		$(this).append('<li>Error requesting page ' + settings.url + ': ' + error + '</li>');
+		if (error) {
+			$(this).append('<li>Error requesting page ' + settings.url + ': ' + error + '</li>');
+		}
+		if (xhr.status == 503 && settings.url.match(/^\\/watch\?/)) {
+			// timeout occured.  restart watcher.
+			updateStatus();
+		}
 	});
 	var uploading = false;
-	var updateStatus = function() {
+	updateStatus = function() {
 		setTimeout(function() {
 			$.getJSON('/watch?uuid=<%= uuid %>', function(data) {
 				var msg = data.bytes + ' bytes transfered.';
