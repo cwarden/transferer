@@ -12,6 +12,5 @@ Initial upload code adapted from Felix Geisendörfer's work: http://debuggable.c
 The code should be considered prototype quality at this point.
 
 TODO
-* Figure out how to best handle dependencies
 * Unit tests
 * Give the code some structure
